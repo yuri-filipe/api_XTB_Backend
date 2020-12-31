@@ -1,90 +1,129 @@
-import axios from "axios";
 import WebSocket from "ws";
+import axios from "axios";
+import { inicio, reset, get } from "./timer";
+import { Msg } from "./types";
+import { calculoParametros, setNotificationStatus } from "./core";
+import dotenv from "dotenv";
+import { connect } from "mongoose";
+dotenv.config();
 
+const url = process.env.URL_REAL;
 
+let sessionId = null;
+export let keyServer = false;
+let serverStatus = false;
+export const setKeyServer = (value: boolean) => {
+  keyServer = value;
+};
+export let database = {
+  xtbStatus: null,
+  data: {},
+  max: {
+    lucro: 0,
+    prejuizo: 0,
+  },
+  timer: "00:00:00",
+};
 
-const wsiq = new WebSocket("wss://iqoption.com/echo/websocket");
+let msgLogin: Msg = {
+  command: "login",
+  arguments: {
+    userId: process.env.USERID_REAL,
+    password: process.env.PASSWORD,
+  },
+};
 
-let ssid;
-export const connectIq = async () => {
-  try {
-    const response = await axios.post(
-      "https://auth.iqoption.com/api/v2/login",
-      credentials,
-      {
-        headers: {
-          "User-Agent": "Chrome/85.0.4183.121",
-        },
-      }
-    );
-    console.log("connecting...");
+var send = null;
 
-    console.log(`statusIq ==> ${response.status}`);
-    ssid = response.data.ssid;
-    while (!ssid) {
-      setTimeout(() => {
-        if (ssid) {
-          wsiq.send(
-            JSON.stringify({
-              name: "ssid",
-              msg: ssid,
-            })
-          );
+export default function socket() {
+  let ws = new WebSocket(url);
+  send = (message) => {
+    try {
+      var msg = JSON.stringify(message);
+
+      ws.send(msg);
+    } catch (Exception) {
+      console.error(
+        "Error ao enviar mensagem pelo Socket: " + Exception.message
+      );
+    }
+  };
+  console.log("Criando nova conexão");
+  ws.onopen = function () {
+    console.log("Abrindo Socket");
+    // Login
+    send(msgLogin);
+    inicio(); //RELÓGIO
+  };
+
+  ws.onmessage = function (evt: any) {
+    try {
+      var response = JSON.parse(evt.data);
+      if (response.status == true) {
+        if (response.streamSessionId) {
+          sessionId = response.streamSessionId;
+          console.log("Socket conectado!");
+          getMarginLevel();
+        } else {
+          if (response.returnData) {
+            database.xtbStatus = sessionId;
+            database.data = response.returnData;
+            database.max = calculoParametros(
+              response.returnData.equity - response.returnData.balance
+            );
+            database.timer = get();
+          } else {
+            database.xtbStatus = null;
+            database.data = null;
+            database.max = {
+              lucro: 0,
+              prejuizo: 0,
+            };
+            database.timer = "00:00:00";
+          }
         }
-      }, 3000);
+      } else {
+        alert("Error: " + response.errorDescr);
+      }
+    } catch (Exception) {
+      alert("Fatal error while receiving data! :(");
     }
-    console.log(`Usuário conectado!`);
-  } catch (error) {
-    console.log(
-      `Código do erro ==> ${error.response.status}, Status ==> ${error.response.statusText}`
-    );
-  }
-};
-
-wsiq.onopen = () => {
-  setTimeout(() => {
-    wsiq.send(
-      JSON.stringify({
-        name: "ssid",
-        msg: ssid,
-      })
-    );
-  }, 5000);
-};
-wsiq.on("message", (data) => {
-  let d = JSON.parse(data);
-  if (d.name === "candles") {
-    let params = d.request_id.split("/");
-    let res = candlesGenerator(d.msg.candles, Number(params[1]),params[3]);
-    if (Number(params[2]) !== res[res.length - 1].id) {
-      updateCandles(params[0], res);
-    }
-  }
-});
-
-export const getCandles = (
-  pid: string,
-  urlParidade: number,
-  timeFrame: number,
-  qtd: number,
-  ultimoId: any
-): any => {
-  let params = `${pid}/${qtd}/${ultimoId}/${timeFrame}`;
-  wsiq.send(
-    JSON.stringify({
-      name: "sendMessage",
-      request_id: params,
-      msg: {
-        name: "get-candles",
-        version: "2.0",
-        body: {
-          only_closed: true,
-          active_id: urlParidade, // 1 = EUR/USD
-          size: timeFrame, // 60 segundos
-        },
+  };
+  ws.onclose = function () {
+    console.log("Socket desconectado");
+    sessionId = null;
+    setNotificationStatus(false);
+    reset(); //RELÓGIO
+    database = {
+      xtbStatus: null,
+      data: {},
+      max: {
+        lucro: 0,
+        prejuizo: 0,
       },
-    })
-  );
-};
+      timer: "00:00:00",
+    };
+  };
 
-export default connectIq;
+  function getMarginLevel() {
+    setInterval(() => {
+      send({
+        command: "getMarginLevel",
+      });
+    }, 1000);
+  }
+}
+export function disconnect() {
+  console.log("Desconectando no Socket");
+  send({
+    command: "logout",
+  });
+}
+
+setInterval(() => {
+  // SE O SOCKET ESTÁ FECHADO E A CHAVE ESTÁ ABERTA, DEVERÁ SE RECONECTAR
+  if (!database.xtbStatus && keyServer === true) {
+    socket();
+  }
+}, 20000);
+// 300000 = 5 minutos

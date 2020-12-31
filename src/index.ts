@@ -1,90 +1,94 @@
-import WebSocket from 'ws'
-import axios from "axios";
-import { Msg } from './types'
+import express from "express";
+import cors from "cors";
+import bodyParser from "body-parser";
+import socket, { database, disconnect, setKeyServer } from "./api";
+import dotenv from "dotenv";
+dotenv.config();
 
-const url = "wss://ws.xtb.com/real";
-let sessionId: string
-const ws = new WebSocket(url);
-//userId: "11655300",
-//userId: "1579804",
-let msgLogin: Msg = {
-    command: "login",
-    arguments: {
-        userId: "1579804",
-        password: "Conta22641127"
-    }
-}
+import helmet from "helmet";
+import {
+  resetCore,
+  setNotificationStatus,
+  setStopLoss,
+  setTakeProfit,
+} from "./core";
 
+const app = express();
 
-function connect() {
-    console.log('Conectando no Socket');
-    ws.onopen = function () {
-        console.log('Socket Conectado');
-        // Login
-        console.log("Autenticando");
-        send(msgLogin);
-    };
+//MIDLEWARES
 
-};
+// * CONEXÃO E AUTENTICAÇÃO COM A IQ
+// 1º CONECTAR DE FORMA SINCRONA COM O SERVIDOR DA IQ E AUTENTICAR USUÁRIO
+// 2º RETORNAR PELO CONSOLE SE TODAS AS CONEXÕES FORAM BEM SUCEDIDAS
 
-ws.onmessage = function (evt) {
+// * SINCRONIZAÇÃO
+// 1º FICAR DISPONÍVEL PARA AUTENTICAÇÃO DE USUÁRIO NO FRONTEND
+// 2 º d
+app.use(helmet());
+app.use((req, res, next) => {
+  //Cria um middleware onde todas as requests passam por ele
+  if (req.headers["x-forwarded-proto"] == "http")
+    //Checa se o protocolo informado nos headers é HTTP
+    res.redirect(`https://${req.headers.host}${req.url}`);
+  //Redireciona pra HTTPS
+  //Se a requisição já é HTTPS
+  else next(); //Não precisa redirecionar, passa para os próximos middlewares que servirão com o conteúdo desejado
+});
 
+app.use(cors());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
-    try {
-        var response = JSON.parse(evt.data);
+app.post("/api/v1/data", (req, res, next) => {
+  const { token } = req.body;
+  if (token === process.env.TOKEN) {
+    res.json({ code: "sucess", value: database });
+  } else {
+    res.json({ code: "warning" });
+  }
+});
+app.post("/api/v1/status", (req, res, next) => {
+  const { token } = req.body;
+  if (token === process.env.TOKEN) {
+    res.json({ code: "sucess" });
+  } else {
+    res.json({ code: "warning" });
+  }
+});
+app.post("/api/v1/stopNotification", (req, res, next) => {
+  const { token } = req.body;
+  if (token === process.env.TOKEN) {
+    setNotificationStatus(false);
 
-        if (response.status == true) {
-            if (response.streamSessionId) {
-                sessionId = response.streamSessionId
-                console.log("User conectado!")
-                getMarginLevel()
-            }
-            else {
-                response.returnData ? calcLucro(response.returnData) : ""
-            }
+    res.json({ code: "sucess" });
+  } else {
+    res.json({ code: "warning" });
+  }
+});
+app.post("/api/v1/params", (req, res, next) => {
+  const { token, data } = req.body;
+  if (token === process.env.TOKEN) {
+    setTakeProfit(data.takeProfit); // define take
+    setStopLoss(data.stopLoss); // define stop
+    setKeyServer(true); // permite socket connectar
+    setNotificationStatus(true);
+    socket(); // inicia o socket
+    res.json({ code: "sucess" });
+  } else {
+    res.json({ code: "warning" });
+  }
+});
+app.post("/api/v1/stop", (req, res, next) => {
+  const { token } = req.body;
+  if (token === process.env.TOKEN) {
+    resetCore()
+    setKeyServer(false)
+    setNotificationStatus(true)
+    disconnect();
+    res.json({ code: "sucess" });
+  } else {
+    res.json({ code: "warning" });
+  }
+});
 
-
-        }
-
-
-        else {
-            alert('Error: ' + response.errorDescr);
-        }
-    } catch (Exception) {
-        alert('Fatal error while receiving data! :(');
-    }
-}
-ws.onclose = function () {
-    console.log('Connection closed');
-};
-
-
-
-const send = (message) => {
-    try {
-        var msg = JSON.stringify(message);
-        ws.send(msg);
-
-    } catch (Exception) {
-        console.error('Error ao enviar mensagem pelo Socket: ' + Exception.message);
-    }
-}
-
-
-
-function getMarginLevel() {
-    setInterval(() => {
-        send({
-            command: "getMarginLevel",
-        });
-    }, 1000)
-}
-
-
-
-const calcLucro = (res) => {
-    let soma = Number(res.equity - res.balance)
-
-    console.log("Lucro => " + soma.toFixed(2))
-}
-connect();
+app.listen(3000, () => console.log("Servidor em execução..."));
