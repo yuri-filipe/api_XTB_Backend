@@ -6,7 +6,7 @@ import { calculoParametros, setNotificationStatus } from "./core";
 import dotenv from "dotenv";
 import { connect } from "mongoose";
 dotenv.config();
-import socket2 from './api copy'
+
 const url = process.env.URL_REAL;
 
 let sessionId = null;
@@ -63,7 +63,7 @@ export default function socket() {
         if (response.streamSessionId) {
           sessionId = response.streamSessionId;
           console.log("Socket conectado!");
-         socket2(response.streamSessionId)
+          getMarginLevel();
         } else {
           if (response.returnData) {
             database.xtbStatus = sessionId;
